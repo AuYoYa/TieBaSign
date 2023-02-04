@@ -1,12 +1,10 @@
 name: 'Baidu Tieba Auto Sign'
 
 on:
-  push:
-    branches:
-      - main
   schedule:
     - cron: '0 0,6 * * *'
-
+  workflow_dispatch:
+  
 jobs:
   tieba_sign:
     runs-on: ubuntu-latest
