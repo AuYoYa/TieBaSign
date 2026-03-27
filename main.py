@@ -19,7 +19,7 @@ LIKIE_URL = "http://c.tieba.baidu.com/c/f/forum/like"
 TBS_URL = "http://tieba.baidu.com/dc/common/tbs"
 SIGN_URL = "http://c.tieba.baidu.com/c/c/forum/sign"
 
-TIMEOUT = 15  # ⭐ 拉长超时
+TIMEOUT = 15
 
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
@@ -41,7 +41,7 @@ def create_session():
 
     retry = Retry(
         total=3,
-        backoff_factor=1,  # 指数退避：1s 2s 4s
+        backoff_factor=1,
         status_forcelist=[500, 502, 503, 504],
         allowed_methods=["GET", "POST"]
     )
@@ -83,57 +83,77 @@ def get_tbs(bduss):
     headers = copy.copy(HEADERS)
     headers.update({"Cookie": f"BDUSS={bduss}"})
 
-    for i in range(3):
+    for _ in range(3):
         res = safe_request("GET", TBS_URL, headers=headers)
         if res:
             try:
                 return res.json()["tbs"]
             except Exception as e:
                 logger.error(f"解析 tbs 失败: {e}")
-
         time.sleep(2)
 
     logger.error("获取 tbs 失败")
     return None
 
 
+# ✅ 分页版（关键）
 def get_favorite(bduss):
-    logger.info("获取关注贴吧")
+    logger.info("获取关注贴吧（分页）")
 
-    data = {
-        'BDUSS': bduss,
-        '_client_type': '2',
-        '_client_version': '9.7.8.0',
-        '_phone_imei': '000000000000000',
-        'from': '1008621y',
-        'page_no': '1',
-        'page_size': '200',
-        'model': 'MI+5',
-        'net_type': '1',
-        'timestamp': str(int(time.time())),
-    }
-
-    data = encodeData(data)
-
-    res = safe_request("POST", LIKIE_URL, data=data)
-    if not res:
-        return []
-
-    try:
-        data = res.json()
-    except:
-        return []
-
+    page = 1
     forums = []
 
-    try:
-        fl = data.get("forum_list", {})
-        forums.extend(fl.get("non-gconforum", []))
-        forums.extend(fl.get("gconforum", []))
-    except:
-        pass
+    while True:
+        data = {
+            'BDUSS': bduss,
+            '_client_type': '2',
+            '_client_version': '9.7.8.0',
+            '_phone_imei': '000000000000000',
+            'from': '1008621y',
+            'page_no': str(page),
+            'page_size': '200',
+            'model': 'MI+5',
+            'net_type': '1',
+            'timestamp': str(int(time.time())),
+        }
 
-    logger.info(f"获取到 {len(forums)} 个贴吧")
+        data = encodeData(data)
+
+        res = safe_request("POST", LIKIE_URL, data=data)
+
+        if not res:
+            logger.error(f"第 {page} 页请求失败")
+            break
+
+        try:
+            j = res.json()
+        except:
+            logger.error(f"第 {page} 页解析失败")
+            break
+
+        forum_list = j.get("forum_list", {})
+
+        page_forums = []
+        page_forums.extend(forum_list.get("non-gconforum", []))
+        page_forums.extend(forum_list.get("gconforum", []))
+
+        if not page_forums:
+            logger.info("没有更多贴吧了")
+            break
+
+        forums.extend(page_forums)
+
+        logger.info(f"第 {page} 页获取 {len(page_forums)} 个贴吧")
+
+        if j.get("has_more") != "1":
+            break
+
+        page += 1
+
+        # 防风控（翻页间隔）
+        time.sleep(random.uniform(1.5, 3.5))
+
+    logger.info(f"总共获取 {len(forums)} 个贴吧")
     return forums
 
 
@@ -193,9 +213,12 @@ def main():
 
         for f in forums:
             try:
-                time.sleep(random.randint(1, 5))  # 防风控
+                # ⭐ 核心防风控（签到间隔）
+                time.sleep(random.uniform(2, 5))
+
                 if client_sign(bduss, tbs, f["id"], f["name"]):
                     success += 1
+
             except Exception as e:
                 logger.error(f"异常: {e}")
 
